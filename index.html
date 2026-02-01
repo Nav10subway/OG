@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WI-FI Pass by Navi</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body{
+  margin:0;
+  font-family:Arial, sans-serif;
+  background:#0b0b0b;
+  color:#fff;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+}
+.container{text-align:center}
+.sub{font-size:14px;color:#aaa}
+.streak{color:#00ff99;font-size:14px}
+
+.board-wrap{position:relative;width:286px;margin:20px auto}
+.board{
+  display:grid;
+  grid-template-columns:repeat(3,90px);
+  grid-template-rows:repeat(3,90px);
+  gap:8px;
+}
+.cell{
+  background:#111;
+  border:2px solid #333;
+  font-size:48px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+.cell.pop{animation:pop .15s}
+@keyframes pop{from{transform:scale(.7)}to{transform:scale(1)}}
+
+.win-line{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+.win-line line{
+  stroke:#00ff99;
+  stroke-width:6;
+  stroke-linecap:round;
+  stroke-dasharray:500;
+  stroke-dashoffset:500;
+  animation:draw .35s forwards;
+}
+@keyframes draw{to{stroke-dashoffset:0}}
+
+.status{min-height:24px;margin:10px}
+
+button{
+  padding:10px 16px;
+  margin:6px;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+#restart{background:#00ff99}
+#mute{background:#444;color:#fff}
+.footer{font-size:12px;color:#777;margin-top:10px}
+</style>
+</head>
+
+<body>
+<div class="container">
+  <h1>WI-FI Pass by Navi</h1>
+  <div class="sub">Beat Navi to win Wi-Fi 😈</div>
+  <div class="streak" id="streak">Navi Win Streak: 0 🔥</div>
+
+  <div class="board-wrap">
+    <div class="board" id="board"></div>
+    <svg class="win-line" id="lineSvg"></svg>
+  </div>
+
+  <div class="status" id="status">Your move (X)</div>
+
+  <button id="restart">Restart</button>
+  <button id="mute">🔊 Sound ON</button>
+
+  <div class="footer">Navi never loses… unless you know the secret.</div>
+</div>
+
+<script>
+/* ---------- SOUND ---------- */
+let muted=false;
+const AudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+function sound(f,d=0.12,t="square"){
+  if(muted) return;
+  const o=AudioCtx.createOscillator(),g=AudioCtx.createGain();
+  o.type=t;o.frequency.value=f;
+  o.connect(g);g.connect(AudioCtx.destination);
+  g.gain.value=0.15;
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.001,AudioCtx.currentTime+d);
+  o.stop(AudioCtx.currentTime+d);
+}
+
+/* ---------- VIBRATION ---------- */
+function tapVibrate(){
+  if(navigator.vibrate) navigator.vibrate(30);
+}
+function loseVibrate(){
+  if(navigator.vibrate) navigator.vibrate([200,80,200,80,300]);
+}
+
+/* ---------- GAME ---------- */
+const boardEl=document.getElementById("board");
+const statusEl=document.getElementById("status");
+const streakEl=document.getElementById("streak");
+const lineSvg=document.getElementById("lineSvg");
+
+let board,gameOver;
+let currentTurn="X";
+let naviStreak=0;
+
+const secretPattern=[0,4,8,2];
+let secretIndex=0;
+let secretBroken=false;
+
+const wins=[
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6]
+];
+
+function init(){
+  board=["","","","","","","","",""];
+  gameOver=false;
+  secretIndex=0;
+  secretBroken=false;
+  currentTurn="X";
+  boardEl.innerHTML="";
+  lineSvg.innerHTML="";
+  statusEl.textContent="Your move (X)";
+  for(let i=0;i<9;i++){
+    const c=document.createElement("div");
+    c.className="cell";
+    c.onclick=()=>playerMove(i,c);
+    boardEl.appendChild(c);
+  }
+}
+init();
+
+/* ---------- PLAYER ---------- */
+function playerMove(i,cell){
+  if(board[i]||gameOver||currentTurn!=="X") return;
+
+  tapVibrate();
+  board[i]="X";
+  cell.textContent="X";
+  cell.classList.add("pop");
+  sound(700);
+
+  // 🔒 FIXED SECRET LOGIC (STEP 2)
+  if(!secretBroken){
+    if(secretPattern[secretIndex] === i){
+      secretIndex++;
+    } else {
+      secretBroken = true;
+    }
+  }
+
+  const win=checkWin("X");
+  if(win) return endPlayerWin(win);
+  if(full()) return drawMatch();
+
+  currentTurn="O";
+  statusEl.textContent="Navi is thinking… 🤖";
+  setTimeout(aiMove,350);
+}
+
+/* ---------- AI ---------- */
+function aiMove(){
+  if(gameOver||currentTurn!=="O") return;
+
+  let best=-1,bestScore=-999;
+  let allowPlayerWin =
+    !secretBroken &&
+    secretIndex === secretPattern.length;
+
+  if(allowPlayerWin){
+    const empties=board.map((v,i)=>v===""?i:null).filter(v=>v!==null);
+    best=empties[Math.floor(Math.random()*empties.length)];
+  } else {
+    for(let i=0;i<9;i++){
+      if(!board[i]){
+        board[i]="O";
+        let s=minimax(false,0);
+        board[i]="";
+        if(s>bestScore){bestScore=s;best=i;}
+      }
+    }
+  }
+
+  board[best]="O";
+  const cell=boardEl.children[best];
+  cell.textContent="O";
+  cell.classList.add("pop");
+  sound(300,0.15,"sawtooth");
+
+  const win=checkWin("O");
+  if(win) return endNaviWin(win);
+  if(full()) return drawMatch();
+
+  currentTurn="X";
+  statusEl.textContent="Your move (X)";
+}
+
+function minimax(isMax,d){
+  if(checkWin("O")) return 10-d;
+  if(checkWin("X")) return d-10;
+  if(full()) return 0;
+  let best=isMax?-999:999;
+  for(let i=0;i<9;i++){
+    if(!board[i]){
+      board[i]=isMax?"O":"X";
+      best=isMax?Math.max(best,minimax(!isMax,d+1))
+                :Math.min(best,minimax(!isMax,d+1));
+      board[i]="";
+    }
+  }
+  return best;
+}
+
+/* ---------- CHECKS ---------- */
+function checkWin(p){return wins.find(w=>w.every(i=>board[i]===p));}
+function full(){return board.every(c=>c);}
+
+/* ---------- WIN LINE ---------- */
+function drawLine(combo){
+  const map={
+    "0,1,2":[10,45,276,45],
+    "3,4,5":[10,143,276,143],
+    "6,7,8":[10,241,276,241],
+    "0,3,6":[45,10,45,276],
+    "1,4,7":[143,10,143,276],
+    "2,5,8":[241,10,241,276],
+    "0,4,8":[10,10,276,276],
+    "2,4,6":[276,10,10,276]
+  };
+  const [x1,y1,x2,y2]=map[combo.join(",")];
+  const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+  l.setAttribute("x1",x1);
+  l.setAttribute("y1",y1);
+  l.setAttribute("x2",x2);
+  l.setAttribute("y2",y2);
+  lineSvg.appendChild(l);
+}
+
+/* ---------- RESULTS ---------- */
+function endNaviWin(win){
+  gameOver=true;
+  naviStreak++;
+  streakEl.textContent=`Navi Win Streak: ${naviStreak} 🔥`;
+  statusEl.textContent="Navi: Too easy 😈";
+  drawLine(win);
+  loseVibrate();
+  sound(120,0.4,"triangle");
+}
+
+function endPlayerWin(win){
+  gameOver=true;
+  naviStreak=0;
+  streakEl.textContent="Navi Win Streak: 0 🔥";
+  statusEl.textContent="Navi: Impossible… 😱";
+  drawLine(win);
+  sound(900,0.2);
+}
+
+function drawMatch(){
+  gameOver=true;
+  statusEl.textContent="Draw 😤";
+  sound(420,0.2);
+}
+
+/* ---------- BUTTONS ---------- */
+document.getElementById("restart").onclick=init;
+document.getElementById("mute").onclick=function(){
+  muted=!muted;
+  this.textContent=muted?"🔇 Sound OFF":"🔊 Sound ON";
+};
+</script>
+</body>
+</html>
+
